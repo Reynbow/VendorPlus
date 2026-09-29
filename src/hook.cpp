@@ -1,6 +1,8 @@
-// Inline hooks. Each hooked function starts with 15 position-independent bytes; they are replaced by
+// Inline hooks. Each hooked function starts with n (15 or more) position-independent bytes; the first 15 are
+// replaced by
 //     jmp [rip+0] ; dq hook ; nop
-// and a trampoline runs the original 15 bytes, then jumps back to target+15.
+// and a trampoline runs the original n bytes, then jumps back to target+n (bytes 15..n-1 are never reached
+// from the start again: nothing jumps into a prologue).
 #include "common.h"
 #include <intrin.h>
 
@@ -31,9 +33,13 @@ bool PatchCode(uint8_t* target, const uint8_t* patch, size_t n) {
 }
 
 // *original is set before the jump is written: the hook can run the moment the patch lands.
-bool InstallJmpHook(uint8_t* target, const uint8_t prologue[15], void* hook, void* volatile* original, const char* what,
-                    std::string& err) {
-    if (memcmp(target, prologue, 15) != 0) {
+bool InstallJmpHook(uint8_t* target, const uint8_t* prologue, void* hook, void* volatile* original, const char* what,
+                    std::string& err, size_t n) {
+    if (n < 15 || n > 32) {
+        err = std::string(what) + ": bad prologue length";
+        return false;
+    }
+    if (memcmp(target, prologue, n) != 0) {
         err = std::string(what) + " is already patched in memory (another mod hooks it)";
         return false;
     }
@@ -42,12 +48,12 @@ bool InstallJmpHook(uint8_t* target, const uint8_t prologue[15], void* hook, voi
         err = "trampoline allocation failed";
         return false;
     }
-    // Trampoline: the 15 original bytes, then jmp [rip] -> target+15.
-    memcpy(tramp, prologue, 15);
+    // Trampoline: the n original bytes, then jmp [rip] -> target+n.
+    memcpy(tramp, prologue, n);
     const uint8_t jmp[6] = {0xFF, 0x25, 0, 0, 0, 0};
-    memcpy(tramp + 15, jmp, 6);
-    uint64_t back = (uint64_t)(target + 15);
-    memcpy(tramp + 21, &back, 8);
+    memcpy(tramp + n, jmp, 6);
+    uint64_t back = (uint64_t)(target + n);
+    memcpy(tramp + n + 6, &back, 8);
     DWORD old = 0;
     VirtualProtect(tramp, 64, PAGE_EXECUTE_READ, &old);
     FlushInstructionCache(GetCurrentProcess(), tramp, 64);

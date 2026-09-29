@@ -140,4 +140,37 @@ void SavePairedVendor(uint32_t id) {
     WritePrivateProfileStringW(L"State", L"PairedVendor", buf, StatePath().c_str());
 }
 
+// The wardrobe's slots (their place in its grid): whether wardrobes in the world show them with their face camera.
+// Learned from those wardrobes as you use them ([Wardrobe] in the state file); -1 = not seen yet.
+static SRWLOCK g_closeUpLock = SRWLOCK_INIT;
+static int g_closeUp[8];
+static bool g_closeUpRead = false;
+
+int WardrobeCloseUp(int slot) {
+    if (slot < 0 || slot >= 8) return -1;
+    AcquireSRWLockExclusive(&g_closeUpLock);
+    if (!g_closeUpRead) {
+        g_closeUpRead = true;
+        for (int i = 0; i < 8; ++i) {
+            wchar_t key[16];
+            swprintf_s(key, L"Slot%d", i);
+            const int v = (int)GetPrivateProfileIntW(L"Wardrobe", key, -1, StatePath().c_str());
+            g_closeUp[i] = v == 0 || v == 1 ? v : -1;
+        }
+    }
+    const int v = g_closeUp[slot];
+    ReleaseSRWLockExclusive(&g_closeUpLock);
+    return v;
+}
+
+void SaveWardrobeCloseUp(int slot, bool closeUp) {
+    if (slot < 0 || slot >= 8 || WardrobeCloseUp(slot) == (closeUp ? 1 : 0)) return;
+    AcquireSRWLockExclusive(&g_closeUpLock);
+    g_closeUp[slot] = closeUp ? 1 : 0;
+    ReleaseSRWLockExclusive(&g_closeUpLock);
+    wchar_t key[16];
+    swprintf_s(key, L"Slot%d", slot);
+    WritePrivateProfileStringW(L"Wardrobe", key, closeUp ? L"1" : L"0", StatePath().c_str());
+}
+
 }  // namespace vp

@@ -7,6 +7,7 @@ namespace vp {
 HMODULE g_self = nullptr;
 std::wstring g_modDir;
 uintptr_t g_gameBase = 0;
+bool g_knownBuild = false;
 
 static const char* kKnownBuildId = "6ab107a0-06301000-05eedcbd";  // build 25472515
 
@@ -40,8 +41,8 @@ static void Setup() {
         Log("Cannot read the game image; not installing");
         return;
     }
-    Log("Game build %s (%s)", build.c_str(),
-        build == kKnownBuildId ? "known build 25472515" : "other build; running on signatures");
+    g_knownBuild = build == kKnownBuildId;
+    Log("Game build %s (%s)", build.c_str(), g_knownBuild ? "known build 25472515" : "other build; running on signatures");
     Log("Settings: VendorId=%u PairedVendor=%u", g_cfg.vendorId, PairedVendor());
 
     // The game hook first, so the script's config already says whether it works when the UI asks for it.
