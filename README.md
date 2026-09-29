@@ -7,7 +7,7 @@ Download and install instructions are on Nexus Mods (search for VendorPlus in th
 ## Features
 
 - A tab row like the game menu's on Artifact Formation, the vendor and the wardrobe: switch with LB / RB, the keyboard's menu keys, or a click.
-- Arrows in the vendor's title bar (LT / RT on a controller) flip through all 7 vendors, each named by its zone.
+- Arrows in the vendor's title bar (R / T, or the right stick on a controller) flip through all 7 vendors, each named by its zone. On the vendor screen Q / E and LT / RT stay the vendor's amount keys.
 - Each vendor keeps its own zone's vendor level.
 - A vendor stays locked until you've visited it once at its counter.
 - The Wardrobe tab opens the game's own wardrobe with a wardrobe's camera: the full body, and a close-up for the face slots (learned from the wardrobes you use).

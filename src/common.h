@@ -104,7 +104,18 @@ struct InputTargets {
     uint32_t input = 0;     // ui_shop::handle_input body (hooked)
     uint32_t pressed = 0;   // ActionPressed(actions, id)
     uint32_t keys[4] = {};  // the action id words: MENU_NEXT, MENU_PREV, MENU_NEXT_SECONDARY, MENU_PREV_SECONDARY
+    uint32_t amount[2] = {};  // the vendor's amount keys: MENU_SHOP_INCREASE_QUANTITY, MENU_SHOP_DECREASE_QUANTITY
+    uint32_t axis = 0;        // AxisValue(actions, id, 0): a stick's axis, -1..1
+    uint32_t stick[2] = {};   // MENU_SCROLL_RIGHT_STICK_X, MENU_SCROLL_RIGHT_STICK_Y
 };
+struct InputTestFns {  // stand-ins for the game's input (tests)
+    void *pressed = nullptr, *axis = nullptr;
+    const uint16_t* keys[4] = {};
+    const uint16_t* amount[2] = {};
+    const uint16_t* stick[2] = {};
+};
+void SetInputForTest(const InputTestFns& f);
+void InputFrameForTest(uint8_t* input);  // one frame of the input hook's reading
 struct WardrobeTargets {
     uint32_t setState = 0, findStack = 0, stateIndex = 0;  // the UI state stack functions
     uint32_t gameStatesName = 0, wardrobeName = 0;          // the game's name objects for the stack and the state

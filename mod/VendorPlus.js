@@ -21,6 +21,9 @@
         ['', 'Wardrobe']];  // the game calls its screen "Skins"; the tab says what it is
     // The menu actions the game's own tab rows use (LB / RB on a pad), and the pair the vendor arrows use.
     var KEY_PREV = 'MENU_PREV', KEY_NEXT = 'MENU_NEXT', KEY_PREV2 = 'MENU_PREV_SECONDARY', KEY_NEXT2 = 'MENU_NEXT_SECONDARY';
+    // The vendor's own amount keys ("[Q] x1 [E]", LT / RT on a pad): some of those same keys.
+    var AMOUNT_DOWN = 'MENU_SHOP_DECREASE_QUANTITY', AMOUNT_UP = 'MENU_SHOP_INCREASE_QUANTITY';
+    var STICK = 'MENU_SCROLL_RIGHT_STICK_X';  // the right stick, sideways: the vendor arrows on a pad
     var ICONS = 'coui://base/uiresources/game/symbols/Icon/';
     var HOVER = ['menu-button--hovered', 'selection-item--hovered'];
     var CSS = '.vp-arrow{display:flex;align-items:center;justify-content:center;min-width:3.7037037037vh}' +
@@ -153,7 +156,8 @@
         if (onClick) n.addEventListener('click', onClick);
         return n;
     }
-    function syncKey(n, action) {
+    // off: the key does something else here (the game's own "unavailable" look).
+    function syncKey(n, action, off) {
         if (!n) return;
         var k = 'ui_action_keys_' + action + '_';
         var path = model(k + 'path', '') || '', asText = !!model(k + 'text_show', false);
@@ -165,6 +169,45 @@
         setClass(label, 'action-key__text--show', asText);
         if (label.textContent !== text) label.textContent = text;
         setClass(n, 'action-key--KB-wide', asText && wide);
+        setClass(n, 'action-key--disabled', !!off);
+    }
+    // The right stick's prompt: the game's own for that axis, or its right stick icon for the pad in use (named like
+    // the pad's other prompts: XB_... or PS_...).
+    function syncStick(n) {
+        if (!n) return;
+        var path = model('ui_action_keys_' + STICK + '_path', '') || '';
+        if (!path) {
+            var other = String(model('ui_action_keys_' + KEY_PREV + '_path', '') || '');
+            var m = /^(.*\/)(XB|PS)_[^\/]*$/.exec(other);
+            path = (m ? m[1] + m[2] : 'coui://base/uiresources/game/symbols/Controls/XB') + '_RIGHT_STICK_X.svg';
+        }
+        var icon = n.firstChild, label = n.lastChild, bg = 'url("' + path + '")';
+        if (icon.__vpBg !== bg) { icon.__vpBg = bg; icon.style.backgroundImage = bg; }
+        setClass(icon, 'action-key__icon--hide', false);
+        setClass(label, 'action-key__text--show', false);
+        if (label.textContent !== '') label.textContent = '';
+        setClass(n, 'action-key--KB-wide', false);
+        setClass(n, 'action-key--disabled', false);
+    }
+    function padInUse() { var d = model('ui_input_active_controller_device', -1); return d === 0 || d === -1; }
+    // An action on the same key as one of the vendor's amount keys, on the device in use (Q / E, or LT / RT).
+    function keyOf(action) {
+        var k = 'ui_action_keys_' + action + '_';
+        return String(model(k + 'path', '') || '') + '|' + String(model(k + 'text_value', '') || '');
+    }
+    function amountKey(action) {
+        var key = keyOf(action);
+        return key !== '|' && (key === keyOf(AMOUNT_DOWN) || key === keyOf(AMOUNT_UP));
+    }
+    // The keys as the game shows them on the vendor screen, logged when they change (which ones are shared).
+    var keysLogged = '';
+    function logKeys(st) {
+        function k(a) { return keyOf(a).replace(/^[^|]*\//, ''); }
+        var line = 'keys (device ' + model('ui_input_active_controller_device', -1) + '): tabs ' + k(KEY_PREV) + ' ' +
+            k(KEY_NEXT) + ', arrows ' + k(KEY_PREV2) + ' ' + k(KEY_NEXT2) + ', amount ' + k(AMOUNT_DOWN) + ' ' +
+            k(AMOUNT_UP) + ', stick ' + (String(model('ui_action_keys_' + STICK + '_path', '') || '-').replace(/^.*\//, '')) +
+            (st && st.stickOk ? '' : ' (no stick reader)');
+        if (line !== keysLogged) { keysLogged = line; log(line, true); }
     }
 
     // ---------------------------------------------------------------- the tab row
@@ -245,8 +288,10 @@
             setClass(b, 'menu-button--selected', on);
             setClass(b, 'selection-item--selected', on);
         }
-        syncKey(host.querySelector('.vp-key--prev'), KEY_PREV);
-        syncKey(host.querySelector('.vp-key--next'), KEY_NEXT);
+        // On the vendor screen, keys that are its amount keys too (Q / E) change the amount: shown unavailable.
+        var off = screen === VENDOR && (amountKey(KEY_PREV) || amountKey(KEY_NEXT));
+        syncKey(host.querySelector('.vp-key--prev'), KEY_PREV, off);
+        syncKey(host.querySelector('.vp-key--next'), KEY_NEXT, off);
     }
 
     // ---------------------------------------------------------------- the vendor switcher
@@ -304,8 +349,13 @@
             crumbs.appendChild(nextKey);
             log('vendor switcher added');
         }
-        syncKey(crumbs && crumbs.querySelector('.vp-vkey--prev'), KEY_PREV2);
-        syncKey(crumbs && crumbs.querySelector('.vp-vkey--next'), KEY_NEXT2);
+        // The arrows' keys; when they're the vendor's amount keys too (LT / RT on a pad), the right stick instead.
+        var prevKey = crumbs && crumbs.querySelector('.vp-vkey--prev'), nextKey = crumbs && crumbs.querySelector('.vp-vkey--next');
+        var shared = amountKey(KEY_PREV2) || amountKey(KEY_NEXT2);
+        var stick = shared && !!(st && st.stickOk) && padInUse();
+        if (stick) syncStick(prevKey); else syncKey(prevKey, KEY_PREV2, shared);
+        syncKey(nextKey, KEY_NEXT2, shared);
+        setClass(nextKey, 'vp-hidden', stick);
         var count = crumbs && crumbs.querySelector('.vp-count');
         if (count) {
             var idx = vendorIndex(st), nText = (idx >= 0 ? idx + 1 : '-') + ' / ' + vendors.length;
@@ -418,19 +468,31 @@
 
     // The DLL counts presses of the menu actions (LB / RB and the secondary pair); act on the ones since the
     // last status while our tabs show. The wardrobe uses LB / RB itself for an item's materials, so there they
-    // only switch tabs from its top level.
-    var padSeen = null;
+    // only switch tabs from its top level. Presses that were the vendor's amount keys too (Q / E, LT / RT) come
+    // apart (padAmt): on the vendor screen they're its amount, elsewhere they switch as usual. There a flick of the
+    // right stick (stick: right, left) flips the vendors on a pad.
+    var padSeen = null, amtSeen = null, stickSeen = null;
+    function counts(a, n) {
+        if (!a || a.length !== n) { a = []; for (var i = 0; i < n; i++) a.push(0); }
+        return a.slice();
+    }
     function handlePad(st, show) {
         var p = st && st.pad;
         if (!p || p.length < 4) return;
-        var seen = padSeen;
+        var a = counts(st.padAmt, 4), s = counts(st.stick, 2);
+        var seen = padSeen, seenA = amtSeen, seenS = stickSeen;
         padSeen = p.slice();
+        amtSeen = a;
+        stickSeen = s;
         if (!seen || !show || busy) return;
-        var d = [];
-        for (var i = 0; i < 4; i++) d.push(p[i] !== seen[i]);
+        var vendor = screenNow === VENDOR, d = [];
+        for (var i = 0; i < 4; i++) d.push(p[i] !== seen[i] || (!vendor && a[i] !== seenA[i]));
         if (screenNow === WARDROBE && model('ui_stacks_game_states_player_outfit_browser_current', false)) return;
         if (d[0] !== d[1]) { stepTab(d[0] ? 1 : -1); return; }
-        if (screenNow === VENDOR && d[2] !== d[3]) stepVendor(d[2] ? 1 : -1);
+        if (!vendor) return;
+        if (d[2] !== d[3]) { stepVendor(d[2] ? 1 : -1); return; }
+        var right = s[0] !== seenS[0], left = s[1] !== seenS[1];
+        if (right !== left && padInUse()) stepVendor(right ? 1 : -1);
     }
 
     // The wardrobe's slot whose items are open (its place in the grid: 0 Top Layer, 1 Hair, 2 Base Layer, 3 Facial
@@ -493,6 +555,7 @@
         var show = !!(visit && st && st.installed && screenNow >= 0);
         for (var s = 0; s < 3; s++) syncTabs(s, show && screenNow === s, st);
         syncBar(show && screenNow === VENDOR, st);
+        if (show && screenNow === VENDOR) logKeys(st);
         handlePad(st, show);
         syncSlot(wardrobe);
         var idx = st ? vendorIndex(st) : -1;

@@ -12,7 +12,9 @@
 // wardrobe in the world has you stand on its spot and frames you with its cameras; for the tab, the spot is where
 // you stand and the Formation counter's camera is borrowed for the wardrobe's framing (see "the wardrobe's standing
 // spot" and "the wardrobe's camera" below). LB / RB and the secondary pair are read from the game's own menu
-// actions in ui_shop::handle_input, so every controller, remapped buttons and the keyboard work.
+// actions in ui_shop::handle_input, so every controller, remapped buttons and the keyboard work. The vendor's amount
+// keys are some of those same keys (Q / E, LT / RT): presses that are also amount presses are counted apart, and the
+// script leaves them to the vendor; the right stick flips the vendors on a pad instead.
 #include "common.h"
 #include <atomic>
 #include <cmath>
@@ -65,6 +67,15 @@ static const char* kSigMenuKeys =
 static const char* kSigSecondaryKeys =
     "88 45 50 0F B7 15 ?? ?? ?? ?? 49 8B CD E8 ?? ?? ?? ?? 88 45 A0 0F B7 15 ?? ?? ?? ?? 49 8B CD E8 ?? ?? ?? ?? 44 0F B6 "
     "C0 48 8B 8B 90 00 00 00";
+// The shop's own handle_input asks for the vendor's amount keys: MENU_SHOP_INCREASE_QUANTITY (+6) and
+// MENU_SHOP_DECREASE_QUANTITY (+28), with ActionPressed (+13).
+static const char* kSigAmountKeys =
+    "88 45 90 0F B7 15 ?? ?? ?? ?? 48 8B CB E8 ?? ?? ?? ?? 44 0F B6 E8 88 45 91 0F B7 15 ?? ?? ?? ?? 48 8B CB E8 ?? ?? "
+    "?? ?? 44 0F B6 F0";
+// The menus' stick reader asks AxisValue(actions, id, 0) (+13, and +35) for MENU_SCROLL_RIGHT_STICK_X (+3), then
+// MENU_SCROLL_RIGHT_STICK_Y (+21).
+static const char* kSigStickAxis =
+    "0F B7 15 ?? ?? ?? ?? 45 33 C0 48 8B CB E8 ?? ?? ?? ?? 0F B7 15 ?? ?? ?? ?? 45 33 C0 48 8B CB C5 F8 28 F8 E8";
 const size_t kInputActions = 0x268;  // Input: the action set ActionPressed reads
 
 // ---- the wardrobe ----
@@ -108,6 +119,7 @@ using EventsFn = void (*)(void*, void*, void*, void*, void*, void*, void*, void*
                           void*, void*, void*, void*, void*);
 using InputFn = void (*)(void*, void*, void*, void*, void*, void*, void*, void*, void*, void*);
 using PressedFn = bool (*)(void* actions, uint32_t id);
+using AxisFn = float (*)(void* actions, uint32_t id, uint32_t zero);
 using SetStateFn = void (*)(bool push, const StrView* state, void* stacks, const StrView* stack);
 using FindStackFn = void* (*)(const StrView* name, void* stacks);
 using StateIndexFn = int (*)(void* stack, const StrView* state);
@@ -120,6 +132,12 @@ static void* volatile g_origInput = nullptr;
 static std::atomic<bool> g_inputInstalled{false};
 static std::atomic<uint32_t> g_padCount[4];  // presses of each, for the script
 static bool g_padDown[4] = {};               // game thread only
+static const uint16_t* g_amountIds[2] = {};  // MENU_SHOP_INCREASE_QUANTITY, MENU_SHOP_DECREASE_QUANTITY
+static std::atomic<uint32_t> g_padAmount[4];  // presses of each that were an amount press too (the same key)
+static AxisFn g_axis = nullptr;
+static const uint16_t* g_stickIds[2] = {};    // MENU_SCROLL_RIGHT_STICK_X, MENU_SCROLL_RIGHT_STICK_Y
+static std::atomic<uint32_t> g_stickCount[2];  // right stick flicks: right, left
+static bool g_stickArmed = true;               // game thread only: the stick came back since the last flick
 static std::atomic<bool> g_wardrobe{false};  // the wardrobe's state is on the game_states stack
 
 static void* volatile g_origEvents = nullptr;
@@ -1082,17 +1100,41 @@ static void HookEvents(void* a1, void* a2, void* a3, void* a4, void* a5, void* a
 
 // The menu actions this frame, from the game's own input (so every pad, remapped buttons and the keyboard all
 // work): each press of LB / RB (MENU_PREV / MENU_NEXT) and the secondary pair is counted; the script acts on them
-// while its tabs show. Only reads: the shop itself ignores these actions.
+// while its tabs show. Only reads: the shop itself ignores these actions, but not the keys: the vendor's amount keys
+// are Q / E and LT / RT too. A press that is an amount press in the same frame is that same key, so it's counted
+// apart and the script leaves it to the vendor's amount (as the game itself does with its arrows and the amount).
+// A flick of the right stick, mostly sideways, counts once until the stick comes back.
 static void InputFrame(uint8_t* input) {
     if (!*(void* const*)input) return;  // no input this frame (as the game's own check)
     void* actions = input + kInputActions;
+    bool amount = false;
+    for (int i = 0; i < 2; ++i)
+        if (g_amountIds[i] && g_pressed(actions, *g_amountIds[i])) amount = true;
     for (int i = 0; i < 4; ++i) {
         if (!g_keyIds[i]) continue;
         const bool down = g_pressed(actions, *g_keyIds[i]);
-        if (down && !g_padDown[i]) ++g_padCount[i];
+        if (down && !g_padDown[i]) ++(amount ? g_padAmount : g_padCount)[i];
         g_padDown[i] = down;
     }
+    if (g_axis && g_stickIds[0]) {
+        const float x = g_axis(actions, *g_stickIds[0], 0);
+        const float y = g_stickIds[1] ? g_axis(actions, *g_stickIds[1], 0) : 0.f;
+        if (g_stickArmed && fabsf(x) > 0.7f && fabsf(x) > 1.5f * fabsf(y)) {
+            ++g_stickCount[x > 0 ? 0 : 1];
+            g_stickArmed = false;
+        } else if (!g_stickArmed && fabsf(x) < 0.3f) {
+            g_stickArmed = true;
+        }
+    }
 }
+
+void SetInputForTest(const InputTestFns& f) {
+    g_pressed = (PressedFn)f.pressed;
+    g_axis = (AxisFn)f.axis;
+    for (int i = 0; i < 4; ++i) g_keyIds[i] = f.keys[i];
+    for (int i = 0; i < 2; ++i) g_amountIds[i] = f.amount[i], g_stickIds[i] = f.stick[i];
+}
+void InputFrameForTest(uint8_t* input) { InputFrame(input); }
 
 static void HookInput(void* a1, void* a2, void* a3, void* a4, void* a5, void* a6, void* a7, void* a8, void* a9,
                       void* a10) {
@@ -1123,6 +1165,17 @@ bool FindInputTargets(const Image& img, InputTargets& t, std::string& err) {
     if (const uint32_t second = FindUnique(img, "secondary keys", kSigSecondaryKeys, err2)) {
         t.keys[2] = RipTarget(img, second, 6, 10);   // MENU_NEXT_SECONDARY
         t.keys[3] = RipTarget(img, second, 24, 28);  // MENU_PREV_SECONDARY
+    }
+    const uint32_t amount = FindUnique(img, "amount keys", kSigAmountKeys, err2);
+    if (amount && RipTarget(img, amount, 14, 18) == t.pressed) {  // asked with the same ActionPressed
+        t.amount[0] = RipTarget(img, amount, 6, 10);   // MENU_SHOP_INCREASE_QUANTITY
+        t.amount[1] = RipTarget(img, amount, 28, 32);  // MENU_SHOP_DECREASE_QUANTITY
+    }
+    const uint32_t stick = FindUnique(img, "stick axis", kSigStickAxis, err2);
+    if (stick && RipTarget(img, stick, 14, 18) == RipTarget(img, stick, 36, 40)) {  // both asked the same way
+        t.stick[0] = RipTarget(img, stick, 3, 7);    // MENU_SCROLL_RIGHT_STICK_X
+        t.axis = RipTarget(img, stick, 14, 18);      // AxisValue
+        t.stick[1] = RipTarget(img, stick, 21, 25);  // MENU_SCROLL_RIGHT_STICK_Y
     }
     return true;
 }
@@ -1356,10 +1409,16 @@ static void InstallInputAndWardrobe(const Image& img) {
     if (FindInputTargets(img, in, err)) {
         g_pressed = (PressedFn)(g_gameBase + in.pressed);
         for (int i = 0; i < 4; ++i) g_keyIds[i] = in.keys[i] ? (const uint16_t*)(g_gameBase + in.keys[i]) : nullptr;
+        for (int i = 0; i < 2; ++i) {
+            g_amountIds[i] = in.amount[i] ? (const uint16_t*)(g_gameBase + in.amount[i]) : nullptr;
+            g_stickIds[i] = in.axis && in.stick[i] ? (const uint16_t*)(g_gameBase + in.stick[i]) : nullptr;
+        }
+        g_axis = in.axis ? (AxisFn)(g_gameBase + in.axis) : nullptr;
         if (InstallJmpHook((uint8_t*)g_gameBase + in.input, &img.mem[in.input], (void*)&HookInput, &g_origInput,
                            "shop input", err)) {
             g_inputInstalled = true;
-            Log("Game hook active: shop input +0x%x (controller: tabs%s)", in.input, in.keys[2] ? ", vendors" : "");
+            Log("Game hook active: shop input +0x%x (controller: tabs%s%s%s)", in.input, in.keys[2] ? ", vendors" : "",
+                in.amount[0] ? ", the vendor's amount keys" : "", in.axis ? ", right stick" : "");
         }
     }
     if (!g_inputInstalled.load()) Log("Controller support off (%s)", err.c_str());
@@ -1549,12 +1608,13 @@ static std::string StatusJson(bool accepted) {
     }
     // One of the pair is open (the formation, or any vendor), so the title bar can offer the rest.
     const bool paired = open && formation && vendor && ((type == 1 && id == formation) || (type == 0 && ShopType(id) == 0));
-    char buf[768];
+    char buf[1024];
     sprintf_s(buf,
               "{\"ok\":true,\"version\":\"" VP_VERSION "\",\"installed\":%s,\"accepted\":%s,\"age\":%lld,\"open\":%s,"
               "\"type\":%d,\"id\":%u,\"formationId\":%u,\"vendorId\":%u,\"paired\":%s,\"shops\":%d,\"district\":\"%08x\","
               "\"busy\":%s,\"serial\":%u,\"result\":\"%s\",\"here\":%u,\"homeLevel\":%s,\"locked\":%s,"
-              "\"wardrobe\":%s,\"canWardrobe\":%s,\"pad\":[%u,%u,%u,%u],\"vendors\":[",
+              "\"wardrobe\":%s,\"canWardrobe\":%s,\"pad\":[%u,%u,%u,%u],\"padAmt\":[%u,%u,%u,%u],"
+              "\"stick\":[%u,%u],\"stickOk\":%s,\"vendors\":[",
               g_installed.load() && !g_faulted.load() ? "true" : "false", accepted ? "true" : "false",
               Age(g_seen.load(), now), open ? "true" : "false", type, id, formation, vendor, paired ? "true" : "false",
               g_shopCount.load(), g_district.load(),
@@ -1564,7 +1624,9 @@ static std::string StatusJson(bool accepted) {
               (open && type == 0 && id == g_lockedId.load() && !VendorVisited(id)) ? "true" : "false",
               g_wardrobe.load() ? "true" : "false",
               g_setState && g_outfitState.load() && g_orientationInstalled.load() ? "true" : "false", g_padCount[0].load(),
-              g_padCount[1].load(), g_padCount[2].load(), g_padCount[3].load());
+              g_padCount[1].load(), g_padCount[2].load(), g_padCount[3].load(), g_padAmount[0].load(),
+              g_padAmount[1].load(), g_padAmount[2].load(), g_padAmount[3].load(), g_stickCount[0].load(),
+              g_stickCount[1].load(), g_inputInstalled.load() && g_axis && g_stickIds[0] ? "true" : "false");
     return std::string(buf) + vendors + "],\"zones\":[" + zones + "],\"visited\":[" + visited + "]}";
 }
 
