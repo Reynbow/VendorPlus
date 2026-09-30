@@ -156,8 +156,9 @@ static std::atomic<uint32_t> g_district{0};     // first dword of ActiveDistrict
 static std::atomic<int> g_shopCount{-1};
 
 // ---- the real vendors (build 25472515) ----
-// The shop database has 10 vendors; 7 stand in the world. Found by opening each at its counter (the log's
+// The shop database has 10 vendors; 7 stand in the zones. Found by opening each at its counter (the log's
 // "vendor opened in person" lines) and matched to the zones in Eurogamer's vendor guide. In the guide's order.
+// The other 3 are hidden in the world: each joins the switcher once found (see SwitcherVendors).
 // The district ids came from opening the map in each zone (the map marks the zone, the game's district stack
 // says the id); their vendor levels matched the map's. The Gap is in "Unknown".
 struct KnownVendor {
@@ -174,6 +175,23 @@ static const KnownVendor kKnownVendors[] = {
     {889868091u, "Underpass", 606444525u},
     {2094905740u, "Unknown", 827007400u},
 };
+
+static bool Known(uint32_t id) {
+    for (const KnownVendor& k : kKnownVendors)
+        if (k.id == id) return true;
+    return false;
+}
+// The zone a district is (one of the vendors' zones), or null.
+static const char* ZoneOfDistrict(uint32_t district) {
+    for (const KnownVendor& k : kKnownVendors)
+        if (district && (k.district ? k.district : HomeDistrict(k.id)) == district) return k.zone;
+    return nullptr;
+}
+// A found hidden vendor's name in the switcher: the zone it stands in, marked hidden.
+static std::string HiddenLabel(uint32_t vendor) {
+    const char* zone = ZoneOfDistrict(HomeDistrict(vendor));
+    return zone ? std::string(zone) + " (Hidden)" : std::string("Hidden Vendor");
+}
 
 // Shop list from the ShopDatabase, read on the game thread.
 struct ShopInfo {
@@ -265,17 +283,20 @@ static uint32_t ShopType(uint32_t id) {
     return Lookup(id, s) ? s.type : 0xffffffffu;
 }
 
-// The formation (there's one, in The Gap) and the vendor its tab opens: the INI's VendorId, else the vendor last
-// browsed to, else the first. The shop database doesn't say where a vendor stands (the vendor level comes from
-// the district the player is in), so any vendor works from anywhere; the vendor screen offers them all.
-// The switcher's vendors: every real one, in the guide's order, with their zones. If none of this build's
-// vendors is in the database (another game version): every vendor, in id order, unnamed.
-static void SwitcherVendors(std::vector<uint32_t>& ids, std::vector<const char*>& zones) {
+// The switcher's vendors: every real one, in the guide's order, with their zones; then the database's other
+// vendors (hidden in the world), each only once you've found it and opened it at its counter, in the order found,
+// named by the zone it stands in. If none of this build's vendors is in the database (another game version): every
+// vendor, in id order, unnamed.
+static void SwitcherVendors(std::vector<uint32_t>& ids, std::vector<std::string>& zones) {
     ids.clear();
     zones.clear();
     for (const KnownVendor& k : kKnownVendors)
         if (ShopType(k.id) == 0) ids.push_back(k.id), zones.push_back(k.zone);
-    if (!ids.empty()) return;
+    if (!ids.empty()) {
+        for (uint32_t v : VisitedVendors())
+            if (!Known(v) && ShopType(v) == 0) ids.push_back(v), zones.push_back(HiddenLabel(v));
+        return;
+    }
     AcquireSRWLockShared(&g_shopsLock);
     for (auto& kv : g_shops)
         if (kv.second.type == 0) ids.push_back(kv.first), zones.push_back("");
@@ -297,7 +318,7 @@ static void Pair() {
     g_formationId = formation;
 
     std::vector<uint32_t> ids;
-    std::vector<const char*> zones;
+    std::vector<std::string> zones;
     SwitcherVendors(ids, zones);
     uint32_t vendor = 0;
     if (g_cfg.vendorId && ShopType(g_cfg.vendorId) == 0) vendor = g_cfg.vendorId;
@@ -311,6 +332,8 @@ static void Pair() {
 // A vendor we opened (tab or arrows) that you haven't opened at its counter yet: locked. Its level is 0, so the
 // game locks every item (and hides the level badge); the script covers the items with "visit to unlock".
 static std::atomic<uint32_t> g_lockedId{0};
+// A hidden vendor just opened at its counter, before the district it stands in is known (0 = none).
+static std::atomic<uint32_t> g_foundId{0};
 
 static void QueueEvent(uint8_t* st, uint8_t variant, uint32_t payload) {
     *(uint32_t*)(st + shop::kEventPayload) = payload;
@@ -829,13 +852,28 @@ static void EventsFrame(uint8_t* st, const uint8_t* db, const uint8_t* district,
                 g_lockedId = 0;
                 if (!VendorVisited(id)) {
                     SaveVendorVisited(id);
-                    Log("Vendor %u opened at its counter: unlocked in the switcher", id);
+                    Log(Known(id) ? "Vendor %u opened at its counter: unlocked in the switcher"
+                                  : "Hidden vendor %u found at its counter: added to the switcher", id);
                 }
+                if (!Known(id) && !HomeDistrict(id)) g_foundId = id;
             }
         }
     } else if (wasOpen) {
         Log("Shop closed");
         if (g_phase.load() == kIdle) g_lockedId = 0;
+    }
+    // A hidden vendor opened at its counter: the district you stand in is its home (that zone's name and level from
+    // then on). Known once the game's district stack is (its first vendor level check).
+    if (const uint32_t found = g_foundId.load()) {
+        const uint32_t here = g_currentDistrict.load();
+        if (!open || id != found) {
+            g_foundId = 0;  // closed before it was known: the next visit learns it
+        } else if (g_stack.load() && here) {
+            g_foundId = 0;
+            SaveHomeDistrict(found, here);
+            const char* zone = ZoneOfDistrict(here);
+            Log("Hidden vendor %u stands in district %u (%s)", found, here, zone ? zone : "not one of the vendors' zones");
+        }
     }
     Pair();
     if (g_cfg.diagnostics) LogStateNames();
@@ -1598,7 +1636,7 @@ static std::string StatusJson(bool accepted) {
     const int type = g_type.load();
     const uint32_t id = g_id.load(), formation = g_formationId.load(), vendor = g_vendorId.load();
     std::vector<uint32_t> ids;
-    std::vector<const char*> zoneNames;
+    std::vector<std::string> zoneNames;
     SwitcherVendors(ids, zoneNames);
     std::string vendors, zones, visited;
     for (size_t i = 0; i < ids.size(); ++i) {

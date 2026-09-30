@@ -90,33 +90,55 @@ void SaveHomeDistrict(uint32_t vendor, uint32_t district) {
     WritePrivateProfileStringW(L"Districts", key, val, StatePath().c_str());
 }
 
-// [Visited] vendor id = 1, read once and kept in memory.
+// [Visited] vendor id = the order it was first opened in (1, 2, ...; older builds wrote 1 for all), read once and
+// kept in memory.
 static SRWLOCK g_visitedLock = SRWLOCK_INIT;
-static std::map<uint32_t, bool> g_visited;
+static std::map<uint32_t, uint32_t> g_visited;
 static bool g_visitedRead = false;
+
+static void ReadVisited() {  // under g_visitedLock
+    if (g_visitedRead) return;
+    g_visitedRead = true;
+    std::map<uint32_t, uint32_t> all;
+    ReadSection(L"Visited", all);
+    for (auto& kv : all)
+        if (kv.second) g_visited[kv.first] = kv.second;
+}
 
 bool VendorVisited(uint32_t vendor) {
     AcquireSRWLockExclusive(&g_visitedLock);
-    if (!g_visitedRead) {
-        g_visitedRead = true;
-        std::map<uint32_t, uint32_t> all;
-        ReadSection(L"Visited", all);
-        for (auto& kv : all)
-            if (kv.second) g_visited[kv.first] = true;
-    }
+    ReadVisited();
     const bool yes = g_visited.count(vendor) != 0;
     ReleaseSRWLockExclusive(&g_visitedLock);
     return yes;
 }
 
 void SaveVendorVisited(uint32_t vendor) {
-    if (VendorVisited(vendor)) return;
     AcquireSRWLockExclusive(&g_visitedLock);
-    g_visited[vendor] = true;
+    ReadVisited();
+    const bool known = g_visited.count(vendor) != 0;
+    uint32_t order = 1;
+    for (auto& kv : g_visited)
+        if (kv.second >= order) order = kv.second + 1;
+    if (!known) g_visited[vendor] = order;
     ReleaseSRWLockExclusive(&g_visitedLock);
-    wchar_t key[16];
+    if (known) return;
+    wchar_t key[16], val[16];
     swprintf_s(key, L"%u", vendor);
-    WritePrivateProfileStringW(L"Visited", key, L"1", StatePath().c_str());
+    swprintf_s(val, L"%u", order);
+    WritePrivateProfileStringW(L"Visited", key, val, StatePath().c_str());
+}
+
+std::vector<uint32_t> VisitedVendors() {
+    std::vector<std::pair<uint32_t, uint32_t>> byOrder;  // (order, vendor)
+    AcquireSRWLockExclusive(&g_visitedLock);
+    ReadVisited();
+    for (auto& kv : g_visited) byOrder.push_back({kv.second, kv.first});
+    ReleaseSRWLockExclusive(&g_visitedLock);
+    std::sort(byOrder.begin(), byOrder.end());
+    std::vector<uint32_t> ids;
+    for (auto& o : byOrder) ids.push_back(o.second);
+    return ids;
 }
 
 static uint32_t g_paired = 0;

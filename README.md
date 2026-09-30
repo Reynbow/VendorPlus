@@ -10,6 +10,7 @@ Download and install instructions are on Nexus Mods (search for VendorPlus in th
 - Arrows in the vendor's title bar (R / T, or the right stick on a controller) flip through all 7 vendors, each named by its zone. On the vendor screen Q / E and LT / RT stay the vendor's amount keys.
 - Each vendor keeps its own zone's vendor level.
 - A vendor stays locked until you've visited it once at its counter.
+- Hidden vendors join the arrows once you've found one and opened it at its counter, named by the zone it stands in and with that zone's vendor level. Until then they aren't listed at all.
 - The Wardrobe tab opens the game's own wardrobe with a wardrobe's camera: the full body, and a close-up for the face slots (learned from the wardrobes you use).
 
 ## Requirements (to play)

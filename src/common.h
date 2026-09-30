@@ -44,6 +44,7 @@ uint32_t HomeDistrict(uint32_t vendor);               // [Districts] in the INI,
 void SaveHomeDistrict(uint32_t vendor, uint32_t district);
 bool VendorVisited(uint32_t vendor);                  // [Visited]: opened at its counter at least once
 void SaveVendorVisited(uint32_t vendor);
+std::vector<uint32_t> VisitedVendors();              // every visited vendor, in the order first visited
 int WardrobeCloseUp(int slot);                      // [Wardrobe]: a slot's face camera, learned; -1 = not seen
 void SaveWardrobeCloseUp(int slot, bool closeUp);
 uint32_t PairedVendor();           // the vendor last browsed to from the formation (saved in the INI)
