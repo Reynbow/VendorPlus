@@ -15,7 +15,7 @@ namespace vp {
 extern HMODULE g_self;
 extern std::wstring g_modDir;   // folder holding vendorplus.dll, trailing backslash
 extern uintptr_t g_gameBase;    // live base of CONTROLResonant.exe
-extern bool g_knownBuild;       // the build the offsets were checked on (25472515)
+extern bool g_knownBuild;       // the build the offsets were checked on (25600401; first 25472515)
 
 // ---- logging (util.cpp) ----
 void LogInit();
@@ -152,7 +152,7 @@ const size_t kEventVariant = 0x04;  // event variant: 0 Open, 1 Close, 2.. focus
 const size_t kEventPending = 0x08;
 const size_t kShopId = 0x290;       // the open (or last) shop's id
 const size_t kShopType = 0x294;     // 0 vendor, 1 artifact formation
-const size_t kIsOpen = 0x2fc;       // a shop state is on the game_states stack
+const size_t kIsOpen = 0x2fd;       // a shop state is on the game_states stack (0x2fc before build 25600401)
 const size_t kSort = 0x278, kSortSeen = 0x288;  // sort/category and the copy handle_state_change last built for
 const uint8_t kOpen = 0, kClose = 1;
 const size_t kDbCtrl = 0x30, kDbSlots = 0x38, kDbMask = 0x48;  // ShopDatabase: shop id -> shop (Swiss table)

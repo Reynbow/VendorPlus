@@ -22,7 +22,7 @@
 
 namespace vp {
 
-// ---- signatures (build 25472515); each one pins the structure offsets in common.h ----
+// ---- signatures (build 25472515, updated for 25600401); each one pins the structure offsets in common.h ----
 // heron::ui_shop::process_events body: rdx = ShopMenuState&, event pending flag at +8.
 static const char* kSigEvents =
     "48 89 5C 24 10 48 89 74 24 18 55 41 56 41 57 48 8D AC 24 90 FE FF FF 48 81 EC 70 02 00 00 80 7A 08 00 "
@@ -33,8 +33,9 @@ static const char* kSigOpen =
     "41 8B 08 48 B8 E9 58 04 63 D2 B9 5F DE 48 8B 1F 4C 8D 45 10 48 F7 E1 89 4D 10 48 8D 4B 30 4C 8D 0C 02 48 8D 55 "
     "C0 E8 ?? ?? ?? ?? 48 8B 43 48 48 03 43 30 48 39 45 C0 0F 84 ?? ?? ?? ?? 48 8B 4F 08 8B 06 48 8B 5D C8 89 81 90 02 "
     "00 00 48 8B 4F 08 8B 43 1C 89 81 94 02 00 00";
-// ui_shop::handle_state_change: ShopMenuState+0x2fc = "a shop state is on the stack".
-static const char* kSigOpenFlag = "48 8B CE E8 ?? ?? ?? ?? 88 83 FC 02 00 00 0F B6 B3 FB 02 00 00";
+// ui_shop::handle_state_change: ShopMenuState+0x2fd = "a shop state is on the stack" (+0x2fc before the game's
+// 2026-10-01 update, build 25600401: a byte was added between +0x294 and here).
+static const char* kSigOpenFlag = "48 8B CE E8 ?? ?? ?? ?? 88 83 FD 02 00 00 0F B6 B3 FC 02 00 00";
 // Its list rebuild check: prev = +0x288; cur = +0x278; +0x288 = cur; rebuild when the open flag changed,
 // the category changed, or prev != cur.
 static const char* kSigRebuild =
@@ -42,10 +43,11 @@ static const char* kSigRebuild =
     "41 3A F6 75 0E 40 84 FF 75 09 48 3B C8 0F 84";
 
 // The shop's vendor level: VendorLevel(DistrictDatabase, progress, district stack, world_state) -> level. It takes
-// the district you're in (the top of the stack, 0x142666190) and asks the per-district function below.
+// the district you're in (the top of the stack) and asks the per-district function below; since build 25600401 it's
+// a tail call (jmp) with the same arguments.
 static const char* kSigShopLevel =
-    "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 30 48 8B D9 49 8B F9 49 8B C8 48 8B F2 E8 ?? ?? ?? ?? 48 8D 54 24 20 "
-    "48 8B CB 44 8B 00 44 89";
+    "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B F9 49 8B F1 49 8B C8 48 8B DA E8 ?? ?? ?? ?? 4C 8B CE 4C 8B C3 "
+    "48 8B D7 8B 08";
 // VendorLevelForDistrict(district id, DistrictDatabase, progress, world_state) -> level: the district's vendor
 // upgrade (type 2 in its 0x70-byte upgrade list) and its unlocked tier, at least 1.
 static const char* kSigDistrictLevel =
@@ -58,10 +60,11 @@ static const char* kSigDistrictLevel =
 static const char* kSigInput =
     "48 89 5C 24 08 4C 89 4C 24 20 48 89 54 24 10 55 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 F1 48 81 EC A0 00 00 00 "
     "4D 8B F8 48 8B F9 4C 8B 6D 7F 49 83 7D 00 00 0F 84";
-// The wardrobe's handle_input asks ActionPressed(Input+0x268, id) for MENU_BACK, MENU_PREV and MENU_NEXT (the ids
-// are words the game fills in at start-up): +22 the call, +29 MENU_PREV, +48 MENU_NEXT (rip-relative).
+// The wardrobe's handle_input asks ActionPressed(Input+0x300, id) for MENU_BACK, MENU_PREV and MENU_NEXT (the ids
+// are words the game fills in at start-up): +22 the call, +29 MENU_PREV, +48 MENU_NEXT (rip-relative). The action
+// set was at Input+0x268 before build 25600401.
 static const char* kSigMenuKeys =
-    "4C 8D A3 68 02 00 00 49 8B CC 44 8B 70 08 41 D1 EE 41 80 E6 01 E8 ?? ?? ?? ?? 0F B7 15 ?? ?? ?? ?? 49 8B CC 88 44 "
+    "4C 8D A3 00 03 00 00 49 8B CC 44 8B 70 08 41 D1 EE 41 80 E6 01 E8 ?? ?? ?? ?? 0F B7 15 ?? ?? ?? ?? 49 8B CC 88 44 "
     "24 20 E8 ?? ?? ?? ?? 0F B7 15 ?? ?? ?? ?? 49 8B CC 44 0F B6 E8 E8";
 // Another menu asks for MENU_NEXT_SECONDARY (+6) and MENU_PREV_SECONDARY (+24).
 static const char* kSigSecondaryKeys =
@@ -76,7 +79,7 @@ static const char* kSigAmountKeys =
 // MENU_SCROLL_RIGHT_STICK_Y (+21).
 static const char* kSigStickAxis =
     "0F B7 15 ?? ?? ?? ?? 45 33 C0 48 8B CB E8 ?? ?? ?? ?? 0F B7 15 ?? ?? ?? ?? 45 33 C0 48 8B CB C5 F8 28 F8 E8";
-const size_t kInputActions = 0x268;  // Input: the action set ActionPressed reads
+const size_t kInputActions = 0x300;  // Input: the action set ActionPressed reads (pinned by kSigMenuKeys)
 
 // ---- the wardrobe ----
 // The shop's Open pushes its UI state with SetUIState(push, &state, UIStateStacks*, &stack) (+24 the call):
@@ -477,7 +480,7 @@ const uint32_t kParent = TypeId("coregame::component::ResolvedParent");
 const uint32_t kCameraView = TypeId("coregame::component::CameraView");
 const uint32_t kMixerData = TypeId("heron::cameramixer::component::Data");  // the attach stack
 const uint32_t kCameraEnv = TypeId("coregame::global::Camera");             // +4 the player camera entity
-// The ECS world (build 25472515; checked against the game's own lookups by the self-test).
+// The ECS world (builds 25472515 and 25600401; checked against the game's own lookups by the self-test).
 const size_t kEntCount = 0x58510, kEntGen = 0x584e8, kEntLoc = 0x58530;   // entities: count, generations, locations
 const size_t kArchTypes = 0x18450, kArchOffsets = 0x18458, kArchCount = 0x18464;  // + 32 * chunk
 const size_t kChunkBase = 0x50;                                            // + 8 * chunk
